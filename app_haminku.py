@@ -17,6 +17,7 @@ st.markdown("Easily manage your household items and their quantities.")
 conn = st.connection("gsheets", type=GSheetsConnection)
 SHEET_NAME = "Inv"
 
+@st.cache_data(ttl=600)  # Cache the data for 10 minutes (600 seconds)
 def get_data():
     """
     Reads data from the specified Google Sheet and returns it as a DataFrame.
@@ -34,6 +35,9 @@ def update_gsheet_quantity_and_date(item_name, new_quantity):
     Updates both the 'Quantity' and 'Date' columns in the Google Sheet for a specific item.
     """
     try:
+        # Clear the cache to ensure the next read gets fresh data
+        st.cache_data.clear()
+        
         current_data = get_data()
         row_index = [i for i, name in enumerate(current_data['Name']) if name == item_name]
         
@@ -55,6 +59,9 @@ def update_notes_in_gsheet(item_name, new_notes):
     Updates the 'Notes' column in the Google Sheet for a specific item.
     """
     try:
+        # Clear the cache to ensure the next read gets fresh data
+        st.cache_data.clear()
+        
         current_data = get_data()
         row_index = [i for i, name in enumerate(current_data['Name']) if name == item_name]
         
@@ -74,6 +81,9 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
     and then writing the entire DataFrame back to the Google Sheet.
     """
     try:
+        # Clear the cache to ensure the next read gets fresh data
+        st.cache_data.clear()
+        
         current_data = get_data()
         now = datetime.now()
         date_str = f"{now.month}/{now.day}/{now.year}"
@@ -96,6 +106,9 @@ def delete_item_from_gsheet(item_name):
     Deletes an item from the Google Sheet based on its name.
     """
     try:
+        # Clear the cache to ensure the next read gets fresh data
+        st.cache_data.clear()
+        
         current_data = get_data()
         if item_name in current_data['Name'].values:
             row_to_delete = current_data[current_data['Name'] == item_name].index
@@ -118,7 +131,7 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
             image_url = row.get('Image', '')
             quantity = row.get('Quantity', 0)
             date = row.get('Date', 'No Date')
-            notes = row.get('Notes', '')  # Get the notes from the row
+            notes = row.get('Notes', '')
 
             try:
                 quantity = int(quantity)
@@ -143,12 +156,12 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
 
                 col_b1, col_b2, col_b3 = st.columns(3)
                 with col_b1:
-                    if st.button("Decrease --", key=f"dec_{index}_{is_low_stock_column}"):
+                    if st.button("Decrease", key=f"dec_{index}_{is_low_stock_column}"):
                         new_qty = max(0, quantity - 1)
                         update_gsheet_quantity_and_date(item_name, new_qty)
                         st.rerun() 
                 with col_b2:
-                    if st.button("Increase ++", key=f"inc_{index}_{is_low_stock_column}"):
+                    if st.button("Increase", key=f"inc_{index}_{is_low_stock_column}"):
                         new_qty = quantity + 1
                         update_gsheet_quantity_and_date(item_name, new_qty)
                         st.rerun()
@@ -158,7 +171,6 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
                         st.rerun()
 
                 with st.form(key=f"edit_notes_form_{index}_{is_low_stock_column}"):
-                    # Added height parameter to make the text area smaller
                     new_notes = st.text_area("Notes", value=notes, height=75, key=f"notes_input_{index}_{is_low_stock_column}")
                     
                     submit_notes = st.form_submit_button("Save Notes")
@@ -200,10 +212,10 @@ def main():
         st.session_state.add_item_key = 0
 
     with st.form(key=f"add_item_form_{st.session_state.add_item_key}"):
-        new_image_url = st.text_input("Link Gambar", key="image_url_input", help="Paste a link to an image of the item.")
-        new_item_name = st.text_input("Nama Barang", key="item_name_input", placeholder="e.g., Chicken, Rice, Shampoo")
-        new_quantity = st.number_input("Jumlah", min_value=0, value=1, step=1, key="quantity_input")
-        new_notes = st.text_input("Nota", key="notes_input", placeholder="e.g., in the pantry, expiry date")
+        new_image_url = st.text_input("Image URL (optional)", key="image_url_input", help="Paste a link to an image of the item.")
+        new_item_name = st.text_input("Item Name", key="item_name_input", placeholder="e.g., Chicken, Rice, Shampoo")
+        new_quantity = st.number_input("Initial Quantity", min_value=0, value=1, step=1, key="quantity_input")
+        new_notes = st.text_input("Notes (optional)", key="notes_input", placeholder="e.g., in the pantry, expiry date")
         
         submit_button = st.form_submit_button("Add Item")
 
@@ -216,5 +228,4 @@ def main():
                 st.error("Please enter a name for the item.")
 
 if __name__ == "__main__":
-
     main()
