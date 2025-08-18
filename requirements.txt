@@ -1,4 +1,5 @@
 streamlit
-GSheetsConnection
+streamlit-gsheets
 pandas
-datetime
+requests
+Pillow
