@@ -10,7 +10,7 @@ st.set_page_config(layout="wide")
 LOW_STOCK_THRESHOLD = 1
 
 # App title
-st.title("Household Inventory Manager")
+st.title("Barang Rumah")
 st.markdown("Easily manage your household items and their quantities.")
 
 # Define the Google Sheets connection
@@ -62,7 +62,7 @@ def _perform_optimistic_update(item_name, expected_version, update_function):
         current_version = int(current_item['Version'].iloc[0])
 
         if current_version != expected_version:
-            st.toast(f"Data for '{item_name}' has been changed by another user. Please refresh the page to get the latest version.", icon="⚠️")
+            st.toast(f"Barang '{item_name}' telah diubah oleh orang lain. Refresh the page to get the latest version.", icon="⚠️")
             return False
 
         update_function(current_version + 1)
@@ -248,3 +248,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
