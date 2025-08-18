@@ -200,10 +200,10 @@ def main():
         st.session_state.add_item_key = 0
 
     with st.form(key=f"add_item_form_{st.session_state.add_item_key}"):
-        new_image_url = st.text_input("Image URL (optional)", key="image_url_input", help="Paste a link to an image of the item.")
-        new_item_name = st.text_input("Item Name", key="item_name_input", placeholder="e.g., Chicken, Rice, Shampoo")
-        new_quantity = st.number_input("Initial Quantity", min_value=0, value=1, step=1, key="quantity_input")
-        new_notes = st.text_input("Notes (optional)", key="notes_input", placeholder="e.g., in the pantry, expiry date")
+        new_image_url = st.text_input("Link Gambar", key="image_url_input", help="Paste a link to an image of the item.")
+        new_item_name = st.text_input("Nama Barang", key="item_name_input", placeholder="e.g., Chicken, Rice, Shampoo")
+        new_quantity = st.number_input("Jumlah", min_value=0, value=1, step=1, key="quantity_input")
+        new_notes = st.text_input("Nota", key="notes_input", placeholder="e.g., in the pantry, expiry date")
         
         submit_button = st.form_submit_button("Add Item")
 
@@ -216,4 +216,5 @@ def main():
                 st.error("Please enter a name for the item.")
 
 if __name__ == "__main__":
+
     main()
