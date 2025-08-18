@@ -28,7 +28,6 @@ def get_data_from_gsheets():
     try:
         data = conn.read(worksheet=SHEET_NAME, ttl=0)
         data.dropna(subset=['Image', 'Name', 'Quantity'], how='all', inplace=True)
-        # Ensure the 'Version' column exists and is of integer type
         if 'Version' not in data.columns:
             st.warning("The 'Version' column is missing from your Google Sheet. Please add it.")
             data['Version'] = 1
@@ -36,7 +35,7 @@ def get_data_from_gsheets():
             data['Version'] = data['Version'].fillna(1).astype(int)
         return data
     except Exception as e:
-        st.error(f"Error reading data from Google Sheets: {e}")
+        set_message("Error reading data from Google Sheets. Please refresh.", "error")
         return None
 
 def _get_item_from_gsheets(item_name):
@@ -44,7 +43,6 @@ def _get_item_from_gsheets(item_name):
     Fetches a single item's data directly from the Google Sheet (uncached).
     Used to check the current version before an update.
     """
-    # Temporarily bypass the cache to get the latest data
     conn_uncached = st.connection("gsheets", type=GSheetsConnection)
     data = conn_uncached.read(worksheet=SHEET_NAME, ttl=0)
     item = data[data['Name'] == item_name]
@@ -58,26 +56,32 @@ def _perform_optimistic_update(item_name, expected_version, update_function):
     try:
         current_item = _get_item_from_gsheets(item_name)
         if current_item.empty:
-            st.error("Item not found. Please refresh the page.")
+            set_message("Item not found. Please refresh the page.", "error")
             return False
 
         current_version = int(current_item['Version'].iloc[0])
 
         if current_version != expected_version:
-            st.error(f"Data for '{item_name}' has been changed by another user. Please refresh the page to get the latest version.")
+            set_message(f"Data for '{item_name}' has been changed by another user. Please refresh the page to get the latest version.", "warning")
             return False
 
-        # If versions match, proceed with the update
         update_function(current_version + 1)
         st.cache_data.clear()
         return True
 
     except Exception as e:
-        st.error(f"Error performing optimistic update: {e}")
+        set_message(f"Error performing optimistic update: {e}", "error")
         st.exception(e)
         return False
 
-# --- Refactored update functions to use optimistic locking ---
+# --- Persistent message handling ---
+if "message" not in st.session_state:
+    st.session_state.message = {"text": "", "status": "info"}
+
+def set_message(text, status):
+    st.session_state.message = {"text": text, "status": status}
+
+# --- Refactored update functions to use optimistic locking and set messages ---
 
 def update_gsheet_quantity_and_date(item_name, new_quantity, expected_version):
     def update_logic(new_version):
@@ -91,7 +95,7 @@ def update_gsheet_quantity_and_date(item_name, new_quantity, expected_version):
             st.session_state.inventory_df['Name'] == item_name, 'Version'
         ] = new_version
         conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-        st.success("Quantity and Date updated successfully!")
+        set_message("Quantity and Date updated successfully!", "success")
     
     _perform_optimistic_update(item_name, expected_version, update_logic)
 
@@ -104,7 +108,7 @@ def update_notes_in_gsheet(item_name, new_notes, expected_version):
             st.session_state.inventory_df['Name'] == item_name, 'Version'
         ] = new_version
         conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-        st.success("Notes updated successfully!")
+        set_message("Notes updated successfully!", "success")
         
     _perform_optimistic_update(item_name, expected_version, update_logic)
 
@@ -113,12 +117,11 @@ def delete_item_from_gsheet(item_name, expected_version):
         row_to_delete = st.session_state.inventory_df[st.session_state.inventory_df['Name'] == item_name].index
         st.session_state.inventory_df = st.session_state.inventory_df.drop(row_to_delete)
         conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-        st.success(f"Successfully deleted '{item_name}' from the inventory!")
+        set_message(f"Successfully deleted '{item_name}' from the inventory!", "success")
 
     _perform_optimistic_update(item_name, expected_version, delete_logic)
 
 def add_new_item_to_gsheet(image, name, quantity, notes=None):
-    # Optimistic locking is not needed for adding a new item, as there is no version to check
     try:
         now = datetime.now()
         date_str = f"{now.month}/{now.day}/{now.year}"
@@ -128,19 +131,17 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
             'Quantity': quantity,
             'Notes': notes,
             'Date': date_str,
-            'Version': 1 # New items start at version 1
+            'Version': 1
         }])
         
         st.session_state.inventory_df = pd.concat([st.session_state.inventory_df, new_row_df], ignore_index=True)
         conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
         st.cache_data.clear()
         
-        st.success(f"Successfully added '{name}' to the inventory!")
+        set_message(f"Successfully added '{name}' to the inventory!", "success")
     except Exception as e:
-        st.error(f"Error adding new item to Google Sheet: {e}")
+        set_message(f"Error adding new item to Google Sheet: {e}", "error")
         st.exception(e)
-
-# --- The rest of the app's structure remains the same ---
 
 def display_inventory_items(inventory_df, is_low_stock_column=False):
     if not inventory_df.empty:
@@ -150,7 +151,7 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
             quantity = row.get('Quantity', 0)
             date = row.get('Date', 'No Date')
             notes = row.get('Notes', '')
-            version = row.get('Version', 1) # Get the version from the row
+            version = row.get('Version', 1)
 
             try:
                 quantity = int(quantity)
@@ -204,8 +205,27 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
 def main():
     """Main function to run the Streamlit app."""
     
+    # Check if the data is already in session state. If not, load it.
     if "inventory_df" not in st.session_state:
         st.session_state.inventory_df = get_data_from_gsheets()
+
+    # Display a persistent message if it exists
+    if st.session_state.message["text"]:
+        if st.session_state.message["status"] == "success":
+            st.success(st.session_state.message["text"])
+        elif st.session_state.message["status"] == "warning":
+            st.warning(st.session_state.message["text"])
+        elif st.session_state.message["status"] == "error":
+            st.error(st.session_state.message["text"])
+        
+        # Clear the message on the next rerun
+        st.session_state.message = {"text": "", "status": "info"}
+
+    # Add a refresh button for other users to see the latest data
+    if st.button("Refresh Data", help="Click to get the latest data from the sheet."):
+        st.cache_data.clear()
+        st.session_state.inventory_df = get_data_from_gsheets()
+        st.rerun()
 
     if st.session_state.inventory_df is not None and not st.session_state.inventory_df.empty:
         low_stock_df = st.session_state.inventory_df[st.session_state.inventory_df['Quantity'] <= LOW_STOCK_THRESHOLD]
@@ -244,7 +264,8 @@ def main():
                 st.session_state.add_item_key += 1
                 st.rerun()
             else:
-                st.error("Please enter a name for the item.")
+                set_message("Please enter a name for the item.", "error")
+                st.rerun()
 
 if __name__ == "__main__":
     main()
