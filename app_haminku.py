@@ -17,10 +17,11 @@ st.markdown("Easily manage your household items and their quantities.")
 conn = st.connection("gsheets", type=GSheetsConnection)
 SHEET_NAME = "Inv"
 
-@st.cache_data(ttl=600)  # Cache the data for 10 minutes (600 seconds)
-def get_data():
+@st.cache_data(ttl=600)
+def get_data_from_gsheets():
     """
-    Reads data from the specified Google Sheet and returns it as a DataFrame.
+    Reads data from the specified Google Sheet.
+    This function is cached to prevent frequent API calls.
     """
     try:
         data = conn.read(worksheet=SHEET_NAME, ttl=0)
@@ -32,21 +33,21 @@ def get_data():
 
 def update_gsheet_quantity_and_date(item_name, new_quantity):
     """
-    Updates both the 'Quantity' and 'Date' columns in the Google Sheet for a specific item.
+    Updates the quantity in both the session state and Google Sheet.
     """
     try:
-        # Clear the cache to ensure the next read gets fresh data
-        st.cache_data.clear()
-        
-        current_data = get_data()
-        row_index = [i for i, name in enumerate(current_data['Name']) if name == item_name]
+        # Update the DataFrame in session state for immediate UI feedback
+        row_index = [i for i, name in enumerate(st.session_state.inventory_df['Name']) if name == item_name]
         
         if row_index:
-            current_data.loc[row_index[0], 'Quantity'] = new_quantity
+            st.session_state.inventory_df.loc[row_index[0], 'Quantity'] = new_quantity
             now = datetime.now()
             current_date_str = f"{now.month}/{now.day}/{now.year}"
-            current_data.loc[row_index[0], 'Date'] = current_date_str
-            conn.update(worksheet=SHEET_NAME, data=current_data)
+            st.session_state.inventory_df.loc[row_index[0], 'Date'] = current_date_str
+            
+            # Now, update the Google Sheet and clear the cache
+            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+            st.cache_data.clear()
             st.success("Quantity and Date updated successfully!")
         else:
             st.error(f"Item '{item_name}' not found in the inventory.")
@@ -56,18 +57,15 @@ def update_gsheet_quantity_and_date(item_name, new_quantity):
 
 def update_notes_in_gsheet(item_name, new_notes):
     """
-    Updates the 'Notes' column in the Google Sheet for a specific item.
+    Updates the notes in both the session state and Google Sheet.
     """
     try:
-        # Clear the cache to ensure the next read gets fresh data
-        st.cache_data.clear()
-        
-        current_data = get_data()
-        row_index = [i for i, name in enumerate(current_data['Name']) if name == item_name]
+        row_index = [i for i, name in enumerate(st.session_state.inventory_df['Name']) if name == item_name]
         
         if row_index:
-            current_data.loc[row_index[0], 'Notes'] = new_notes
-            conn.update(worksheet=SHEET_NAME, data=current_data)
+            st.session_state.inventory_df.loc[row_index[0], 'Notes'] = new_notes
+            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+            st.cache_data.clear()
             st.success("Notes updated successfully!")
         else:
             st.error(f"Item '{item_name}' not found in the inventory.")
@@ -77,14 +75,9 @@ def update_notes_in_gsheet(item_name, new_notes):
 
 def add_new_item_to_gsheet(image, name, quantity, notes=None):
     """
-    Adds a new item by reading the data, appending a new row to the DataFrame,
-    and then writing the entire DataFrame back to the Google Sheet.
+    Adds a new item to both the session state and Google Sheet.
     """
     try:
-        # Clear the cache to ensure the next read gets fresh data
-        st.cache_data.clear()
-        
-        current_data = get_data()
         now = datetime.now()
         date_str = f"{now.month}/{now.day}/{now.year}"
         new_row_df = pd.DataFrame([{
@@ -94,8 +87,14 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
             'Notes': notes,
             'Date': date_str
         }])
-        updated_data = pd.concat([current_data, new_row_df], ignore_index=True)
-        conn.update(worksheet=SHEET_NAME, data=updated_data)
+        
+        # Add to session state for immediate display
+        st.session_state.inventory_df = pd.concat([st.session_state.inventory_df, new_row_df], ignore_index=True)
+        
+        # Now, update the Google Sheet and clear the cache
+        conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+        st.cache_data.clear()
+        
         st.success(f"Successfully added '{name}' to the inventory!")
     except Exception as e:
         st.error(f"Error adding new item to Google Sheet: {e}")
@@ -103,17 +102,19 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
 
 def delete_item_from_gsheet(item_name):
     """
-    Deletes an item from the Google Sheet based on its name.
+    Deletes an item from both the session state and Google Sheet.
     """
     try:
-        # Clear the cache to ensure the next read gets fresh data
-        st.cache_data.clear()
-        
-        current_data = get_data()
-        if item_name in current_data['Name'].values:
-            row_to_delete = current_data[current_data['Name'] == item_name].index
-            updated_data = current_data.drop(row_to_delete)
-            conn.update(worksheet=SHEET_NAME, data=updated_data)
+        if item_name in st.session_state.inventory_df['Name'].values:
+            row_to_delete = st.session_state.inventory_df[st.session_state.inventory_df['Name'] == item_name].index
+            
+            # Delete from session state for immediate display
+            st.session_state.inventory_df = st.session_state.inventory_df.drop(row_to_delete)
+            
+            # Now, update the Google Sheet and clear the cache
+            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+            st.cache_data.clear()
+            
             st.success(f"Successfully deleted '{item_name}' from the inventory!")
         else:
             st.warning(f"Item '{item_name}' not found.")
@@ -186,11 +187,13 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
 def main():
     """Main function to run the Streamlit app."""
     
-    inventory_df = get_data()
+    # Check if the data is already in session state. If not, load it.
+    if "inventory_df" not in st.session_state:
+        st.session_state.inventory_df = get_data_from_gsheets()
 
-    if inventory_df is not None and not inventory_df.empty:
-        low_stock_df = inventory_df[inventory_df['Quantity'] <= LOW_STOCK_THRESHOLD]
-        normal_stock_df = inventory_df[inventory_df['Quantity'] > LOW_STOCK_THRESHOLD]
+    if st.session_state.inventory_df is not None and not st.session_state.inventory_df.empty:
+        low_stock_df = st.session_state.inventory_df[st.session_state.inventory_df['Quantity'] <= LOW_STOCK_THRESHOLD]
+        normal_stock_df = st.session_state.inventory_df[st.session_state.inventory_df['Quantity'] > LOW_STOCK_THRESHOLD]
 
         col_left, col_right = st.columns(2)
         
