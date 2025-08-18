@@ -17,6 +17,8 @@ st.markdown("Easily manage your household items and their quantities.")
 conn = st.connection("gsheets", type=GSheetsConnection)
 SHEET_NAME = "Inv"
 
+# --- Helper functions for optimistic locking and data management ---
+
 @st.cache_data(ttl=600)
 def get_data_from_gsheets():
     """
@@ -26,57 +28,97 @@ def get_data_from_gsheets():
     try:
         data = conn.read(worksheet=SHEET_NAME, ttl=0)
         data.dropna(subset=['Image', 'Name', 'Quantity'], how='all', inplace=True)
+        # Ensure the 'Version' column exists and is of integer type
+        if 'Version' not in data.columns:
+            st.warning("The 'Version' column is missing from your Google Sheet. Please add it.")
+            data['Version'] = 1
+        else:
+            data['Version'] = data['Version'].fillna(1).astype(int)
         return data
     except Exception as e:
         st.error(f"Error reading data from Google Sheets: {e}")
         return None
 
-def update_gsheet_quantity_and_date(item_name, new_quantity):
+def _get_item_from_gsheets(item_name):
     """
-    Updates the quantity in both the session state and Google Sheet.
+    Fetches a single item's data directly from the Google Sheet (uncached).
+    Used to check the current version before an update.
     """
-    try:
-        # Update the DataFrame in session state for immediate UI feedback
-        row_index = [i for i, name in enumerate(st.session_state.inventory_df['Name']) if name == item_name]
-        
-        if row_index:
-            st.session_state.inventory_df.loc[row_index[0], 'Quantity'] = new_quantity
-            now = datetime.now()
-            current_date_str = f"{now.month}/{now.day}/{now.year}"
-            st.session_state.inventory_df.loc[row_index[0], 'Date'] = current_date_str
-            
-            # Now, update the Google Sheet and clear the cache
-            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-            st.cache_data.clear()
-            st.success("Quantity and Date updated successfully!")
-        else:
-            st.error(f"Item '{item_name}' not found in the inventory.")
-    except Exception as e:
-        st.error(f"Error updating Google Sheet: {e}")
-        st.exception(e)
+    # Temporarily bypass the cache to get the latest data
+    conn_uncached = st.connection("gsheets", type=GSheetsConnection)
+    data = conn_uncached.read(worksheet=SHEET_NAME, ttl=0)
+    item = data[data['Name'] == item_name]
+    return item
 
-def update_notes_in_gsheet(item_name, new_notes):
+def _perform_optimistic_update(item_name, expected_version, update_function):
     """
-    Updates the notes in both the session state and Google Sheet.
+    Core function for optimistic locking.
+    Checks the item's version before performing an update.
     """
     try:
-        row_index = [i for i, name in enumerate(st.session_state.inventory_df['Name']) if name == item_name]
-        
-        if row_index:
-            st.session_state.inventory_df.loc[row_index[0], 'Notes'] = new_notes
-            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-            st.cache_data.clear()
-            st.success("Notes updated successfully!")
-        else:
-            st.error(f"Item '{item_name}' not found in the inventory.")
+        current_item = _get_item_from_gsheets(item_name)
+        if current_item.empty:
+            st.error("Item not found. Please refresh the page.")
+            return False
+
+        current_version = int(current_item['Version'].iloc[0])
+
+        if current_version != expected_version:
+            st.error(f"Data for '{item_name}' has been changed by another user. Please refresh the page to get the latest version.")
+            return False
+
+        # If versions match, proceed with the update
+        update_function(current_version + 1)
+        st.cache_data.clear()
+        return True
+
     except Exception as e:
-        st.error(f"Error updating Google Sheet: {e}")
+        st.error(f"Error performing optimistic update: {e}")
         st.exception(e)
+        return False
+
+# --- Refactored update functions to use optimistic locking ---
+
+def update_gsheet_quantity_and_date(item_name, new_quantity, expected_version):
+    def update_logic(new_version):
+        st.session_state.inventory_df.loc[
+            st.session_state.inventory_df['Name'] == item_name, 'Quantity'
+        ] = new_quantity
+        st.session_state.inventory_df.loc[
+            st.session_state.inventory_df['Name'] == item_name, 'Date'
+        ] = f"{datetime.now().month}/{datetime.now().day}/{datetime.now().year}"
+        st.session_state.inventory_df.loc[
+            st.session_state.inventory_df['Name'] == item_name, 'Version'
+        ] = new_version
+        conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+        st.success("Quantity and Date updated successfully!")
+    
+    _perform_optimistic_update(item_name, expected_version, update_logic)
+
+def update_notes_in_gsheet(item_name, new_notes, expected_version):
+    def update_logic(new_version):
+        st.session_state.inventory_df.loc[
+            st.session_state.inventory_df['Name'] == item_name, 'Notes'
+        ] = new_notes
+        st.session_state.inventory_df.loc[
+            st.session_state.inventory_df['Name'] == item_name, 'Version'
+        ] = new_version
+        conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+        st.success("Notes updated successfully!")
+        
+    _perform_optimistic_update(item_name, expected_version, update_logic)
+
+def delete_item_from_gsheet(item_name, expected_version):
+    def delete_logic(new_version):
+        row_to_delete = st.session_state.inventory_df[st.session_state.inventory_df['Name'] == item_name].index
+        st.session_state.inventory_df = st.session_state.inventory_df.drop(row_to_delete)
+        conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
+        st.success(f"Successfully deleted '{item_name}' from the inventory!")
+
+    _perform_optimistic_update(item_name, expected_version, delete_logic)
 
 def add_new_item_to_gsheet(image, name, quantity, notes=None):
-    """
-    Adds a new item to both the session state and Google Sheet.
-    """
+    # Optimistic locking is not needed for adding a new item, as there is no version to check
     try:
         now = datetime.now()
         date_str = f"{now.month}/{now.day}/{now.year}"
@@ -85,13 +127,11 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
             'Name': name,
             'Quantity': quantity,
             'Notes': notes,
-            'Date': date_str
+            'Date': date_str,
+            'Version': 1 # New items start at version 1
         }])
         
-        # Add to session state for immediate display
         st.session_state.inventory_df = pd.concat([st.session_state.inventory_df, new_row_df], ignore_index=True)
-        
-        # Now, update the Google Sheet and clear the cache
         conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
         st.cache_data.clear()
         
@@ -100,32 +140,9 @@ def add_new_item_to_gsheet(image, name, quantity, notes=None):
         st.error(f"Error adding new item to Google Sheet: {e}")
         st.exception(e)
 
-def delete_item_from_gsheet(item_name):
-    """
-    Deletes an item from both the session state and Google Sheet.
-    """
-    try:
-        if item_name in st.session_state.inventory_df['Name'].values:
-            row_to_delete = st.session_state.inventory_df[st.session_state.inventory_df['Name'] == item_name].index
-            
-            # Delete from session state for immediate display
-            st.session_state.inventory_df = st.session_state.inventory_df.drop(row_to_delete)
-            
-            # Now, update the Google Sheet and clear the cache
-            conn.update(worksheet=SHEET_NAME, data=st.session_state.inventory_df)
-            st.cache_data.clear()
-            
-            st.success(f"Successfully deleted '{item_name}' from the inventory!")
-        else:
-            st.warning(f"Item '{item_name}' not found.")
-    except Exception as e:
-        st.error(f"Error deleting item: {e}")
-        st.exception(e)
+# --- The rest of the app's structure remains the same ---
 
 def display_inventory_items(inventory_df, is_low_stock_column=False):
-    """
-    A helper function to display a list of inventory items.
-    """
     if not inventory_df.empty:
         for index, row in inventory_df.iterrows():
             item_name = row.get('Name', 'Unknown Item')
@@ -133,6 +150,7 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
             quantity = row.get('Quantity', 0)
             date = row.get('Date', 'No Date')
             notes = row.get('Notes', '')
+            version = row.get('Version', 1) # Get the version from the row
 
             try:
                 quantity = int(quantity)
@@ -159,16 +177,16 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
                 with col_b1:
                     if st.button("Decrease", key=f"dec_{index}_{is_low_stock_column}"):
                         new_qty = max(0, quantity - 1)
-                        update_gsheet_quantity_and_date(item_name, new_qty)
+                        update_gsheet_quantity_and_date(item_name, new_qty, version)
                         st.rerun() 
                 with col_b2:
                     if st.button("Increase", key=f"inc_{index}_{is_low_stock_column}"):
                         new_qty = quantity + 1
-                        update_gsheet_quantity_and_date(item_name, new_qty)
+                        update_gsheet_quantity_and_date(item_name, new_qty, version)
                         st.rerun()
                 with col_b3:
                     if st.button("Delete", key=f"del_{index}_{is_low_stock_column}"):
-                        delete_item_from_gsheet(item_name)
+                        delete_item_from_gsheet(item_name, version)
                         st.rerun()
 
                 with st.form(key=f"edit_notes_form_{index}_{is_low_stock_column}"):
@@ -177,9 +195,8 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
                     submit_notes = st.form_submit_button("Save Notes")
 
                     if submit_notes:
-                        update_notes_in_gsheet(item_name, new_notes)
+                        update_notes_in_gsheet(item_name, new_notes, version)
                         st.rerun()
-
             st.markdown("---")
     else:
         st.info("No items in this category.")
@@ -187,7 +204,6 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
 def main():
     """Main function to run the Streamlit app."""
     
-    # Check if the data is already in session state. If not, load it.
     if "inventory_df" not in st.session_state:
         st.session_state.inventory_df = get_data_from_gsheets()
 
