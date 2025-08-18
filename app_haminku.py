@@ -169,12 +169,12 @@ def display_inventory_items(inventory_df, is_low_stock_column=False):
 
                 col_b1, col_b2, col_b3 = st.columns(3)
                 with col_b1:
-                    if st.button("Decrease", key=f"dec_{index}_{is_low_stock_column}"):
+                    if st.button("Kurang --", key=f"dec_{index}_{is_low_stock_column}"):
                         new_qty = max(0, quantity - 1)
                         update_gsheet_quantity_and_date(item_name, new_qty, version)
                         st.rerun() 
                 with col_b2:
-                    if st.button("Increase", key=f"inc_{index}_{is_low_stock_column}"):
+                    if st.button("Tambah ++", key=f"inc_{index}_{is_low_stock_column}"):
                         new_qty = quantity + 1
                         update_gsheet_quantity_and_date(item_name, new_qty, version)
                         st.rerun()
@@ -248,4 +248,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
