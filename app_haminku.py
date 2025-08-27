@@ -15,7 +15,7 @@ st.markdown("Easily manage your household items and their quantities.")
 
 # Define the Google Sheets connection
 conn = st.connection("gsheets", type=GSheetsConnection)
-SHEET_NAME = "Inv"
+SHEET_NAME = "Inventory"
 
 # --- Helper functions for optimistic locking and data management ---
 
@@ -247,6 +247,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
