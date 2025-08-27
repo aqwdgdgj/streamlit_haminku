@@ -19,7 +19,6 @@ SHEET_NAME = "Inv"
 
 # --- Helper functions for optimistic locking and data management ---
 
-@st.cache_data(ttl=600)
 def get_data_from_gsheets():
     """
     Reads data from the specified Google Sheet.
@@ -248,5 +247,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
